@@ -1,0 +1,52 @@
+Terraform :
+--------------
+Jenkins, Maven, SonarQube, Nexus , Git & GitHub
+-----------------------------------------------
+GitHub Actions 
+------------------
+
+Terraform:
+Installation ans setup 
+EC2 create
+IAM user create  iam-user.tf
+IAM polices create iam-policies.tf , iam-policy-documents.tf
+IAM roles create ( iam-roles.tf)
+iam-users.tf, iam-policies.tf, iam-policy-documents.tf 
+creating users & policies, created iam-groups.tf, iam-group-policy-attachments.tf and iam-group-membership.tf
+ iam-roles.tf, iam-trust-policy-documents.tf, iam-policies.tf, iam-instance-profiles.tf & ec2-instances.tf
+
+Terraform 
+--------------
+ Director structure
+    main.tf
+    var.tf
+    terraform.varstf
+    output.tf
+    /module
+       aws_instance
+            main.tf
+            var.tf
+            output.tf
+       aws_vpc
+            main.tf
+            var.tf
+            output.tf
+       aws_subnet
+            main.tf
+            var.tf
+            output.tf
+       aws_nic
+           main.tf
+           var.tf
+           output.tf
+       aws_sg
+           main.tf
+           var.tf
+           output.tf
+create EC2 instance by using terraform 
+Create S3 bucket by using terraform
+Create VPC by using terraform
+Create IAM user & group with attach policies
+Create EKS cluster by using terraform
+Create ECR container registry by using terraform
+Create ECS by using terraform
