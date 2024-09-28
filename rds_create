@@ -1,0 +1,120 @@
+provider "aws" {
+  region                  = "us-west-2"
+  shared_credentials_file = "<Your AWS Credentials File path>"
+}
+terraform {
+  required_version = ">= 0.12"
+}
+
+#vars.tf
+#variables ------------------------
+variable "AWS_REGION" {
+  default = "us-west-2"
+}
+#-------------------------Fetch VPC ID---------------------------------
+data "aws_vpc" "GetVPC" {
+  filter {
+    name   = "tag:Name"
+    values = ["CustomVPC"]
+  }
+}
+#-------------------------Variable for RDS Configuration---------------------
+variable "rds_instance_identifier" {
+  type    = string
+  default = "terraform-mysql"
+}
+variable "db_name" {
+  type    = string
+  default = "terraform_test_db"
+}
+variable "db_user" {
+  type    = string
+  default = "terraform"
+}
+#-------------------------Fetch Public Subnets List---------------------------------
+data "aws_subnets" "GetSubnet" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.GetVPC.id]
+  }
+  filter {
+    name   = "tag:Type"
+    values = ["Public"]
+  }
+}
+
+
+
+
+
+#main.tf
+# Security group for RDS Instance
+resource "aws_security_group" "rds" {
+  name        = "rds_security_group"
+  description = "Security group for RDS"
+  vpc_id      = data.aws_vpc.GetVPC.id
+  # Keep the instance private by only allowing traffic from the web server.
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  # Allow all outbound traffic.
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name = "rds-security-group"
+  }
+}
+# RDS Subnet Group is a collection of subnets that you can use to designate for your RDS database instance in a VPC
+resource "aws_db_subnet_group" "rds_db_subnet_group" {
+  name       = "rds-subnet-group"
+  subnet_ids = data.aws_subnets.GetSubnet.ids
+}
+# A parameter group is a collection of engine configuration values that you set for your RDS database instance
+resource "aws_db_parameter_group" "rds_para_grp" {
+  name        = "rds-param-group"
+  description = "Parameter group for mysql5.6"
+  family      = "mysql5.6"
+  parameter {
+    name  = "character_set_server"
+    value = "utf8"
+  }
+  parameter {
+    name  = "character_set_client"
+    value = "utf8"
+  }
+}
+# Instances for your RDS
+resource "aws_db_instance" "rds_instance" {
+  identifier                  = var.rds_instance_identifier
+  allocated_storage           = 5
+  engine                      = "mysql"
+  instance_class              = "db.t2.micro"
+  manage_master_user_password = true
+  db_name                     = var.db_name
+  username                    = var.db_name
+  db_subnet_group_name        = aws_db_subnet_group.rds_db_subnet_group.id
+  vpc_security_group_ids      = ["${aws_security_group.rds.id}"]
+  skip_final_snapshot         = true
+  final_snapshot_identifier   = "Ignore"
+}
+
+#output.tf
+output "aws_db_subnet_group" {
+  value       = aws_db_subnet_group.rds_db_subnet_group.id
+  description = "This is DB Subnet Group id."
+}
+output "aws_db_instance" {
+  value       = aws_db_instance.rds_instance.id
+  description = "This is RDS instance ID."
+}
+output "aws_db_parameter_group" {
+  value       = aws_db_parameter_group.rds_para_grp.id
+  description = "This is RDS parameter group ID."
+}
