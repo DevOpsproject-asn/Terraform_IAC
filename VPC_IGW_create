@@ -1,0 +1,68 @@
+WS VPC creating by using of terraform:
+--------------------------------------
+Deploy AWS VPC , Internet Gateway & Associate Using Terraform:
+-------
+provider.tf
+----
+provider "aws" 
+{ 
+region = "var.AWS_REGION" 
+shared_credentials_file = "<Your aws credentials path>" 
+}
+
+variable.tf
+-------
+variable "AWS_REGION" 
+{ 
+default = "us-east-1" 
+}
+
+version.tf
+------
+terraform 
+{ 
+required_version = ">= 0.12" 
+}
+
+main.tf
+----
+resource "aws_vpc" "CustomVPC" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "CustomVPC"
+           }
+}
+
+resource "aws_internet_gateway" "igw" { 
+vpc_id = aws_vpc.CustomVPC.id
+tags = { Name = "IGW" } 
+}
+
+output "vpc_id" { 
+value = aws_instance.CustomVPC.id 
+description = "This is vpc id." 
+} 
+output "enable_dns_support" { 
+value = aws_instance.CustomVPC.enable_dns_support 
+description = "Check whether dns support is enabled for VPC." 
+} 
+output "enable_dns_hostnames" { 
+value = aws_instance.CustomVPC.enable_dns_hostnames 
+description = "Check whether dns hostname is enabled for VPC." 
+} 
+output "aws_internet_gateway_id" { 
+value = aws_internet_gateway.igw.id 
+description = "Internet gateway id." 
+} 
+output "igw_aws_account" { 
+value = aws_internet_gateway.igw.owner_id 
+description = "AWS Account id to which internet gateway is associated." 
+}
+
+
+
+
+
