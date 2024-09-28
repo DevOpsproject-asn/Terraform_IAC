@@ -1,0 +1,99 @@
+Deploy AWS Private Subnet, Nat Gateway, Elastic Ip, Private Route Table & Associate Using Terraform:
+-----------------------------------------------------------------------------------------------------
+provider.tf
+-----------
+ provider "aws" {
+   region                  = "var.AWS_REGION"
+   shared_credentials_file = "<Your AWS Credentials File path>"
+ }
+
+variable.tf
+------------
+ variable "AWS_REGION" {
+   default = "us-east-1"
+ }
+ data "aws_vpc" "GetVPC" {
+ filter {
+     name   = "tag:Name"
+     values = ["CustomVPC"]
+           }
+ }
+ data "aws_subnet" "GetPublicSubnet" {
+ filter {
+     name   = "tag:Name"
+     values = ["PublicSubnet1"]
+           }
+ }
+
+version.tf
+-----------
+ terraform {
+   required_version = ">= 0.12"
+ }
+
+main.tf
+---------
+resource "aws_subnet" "PrivateSubnet" {
+  vpc_id     = data.aws_vpc.GetVPC.id
+  cidr_block = "10.0.128.0/18"
+  availability_zone = "us-east-1a"
+  #map_public_ip_on_launch = true
+
+  tags = {
+    Name = "PrivateSubnet"
+  }
+}
+
+resource "aws_eip" "CustomEIP" {
+  vpc      = true
+  tags = {
+    "Name" = "CustomEIP"
+  }
+}
+
+resource "aws_nat_gateway" "CustomNAT" {
+  allocation_id = aws_eip.CustomEIP.id
+  subnet_id     = data.aws_subnet.GetPublicSubnet.id
+  tags = {
+    Name = "CustomNAT"
+  }
+}
+
+resource "aws_route_table" "PrivateRouteTable" {
+  vpc_id = data.aws_vpc.GetVPC.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.CustomNAT.id
+  }
+
+  tags = {
+    Name = "PrivateRouteTable"
+  }
+}
+
+resource "aws_route_table_association" "PrivateSubnetRouteTableAssociation" {
+  subnet_id      = aws_subnet.PrivateSubnet.id
+  route_table_id = aws_route_table.PrivateRouteTable.id
+}
+
+output.tf
+----------
+output "PrivateSubnet" {
+  value       = aws_subnet.PrivateSubnet.id
+  description = "This is private subnet id."
+}
+output "CustomEIP" {
+  value       = aws_eip.CustomEIP.id
+  description = "Custom elastic ip we created."
+}
+output "CustomNAT" {
+  value       = aws_nat_gateway.CustomNAT.id
+  description = "NAT Gateway ID."
+}
+output "PrivateRouteTable" {
+  value       = aws_route_table.PrivateRouteTable.id
+  description = "List custom privateroute table id."
+}
+
+
