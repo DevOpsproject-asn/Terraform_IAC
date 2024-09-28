@@ -1,0 +1,346 @@
+AWS EKS creating by using of Terraform:
+------------------------------------------
+
+terraform.tf
+-------------
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+  backend "s3" {
+    region = "ap-south-1"
+    dynamodb_table = "terraform-state-table"
+  }
+}
+
+# Configure the AWS Provider
+provider "aws" {
+  region  = var.aws_region
+}
+
+
+variables.tf
+---------------
+variable "aws_region" {
+  type        = string
+  default     = "ap-south-1"
+  description = "The AWS Region In Which Terrform Will Manage The Infrastrucre"
+}
+
+variable "vpc_cidr" {
+  type        = string
+  default     = "10.0.0.0/16"
+  description = "VPC CIDR"
+}
+
+variable "public_subnet_cidrs" {
+  type    = list(string)
+  default = ["10.0.0.0/19", "10.0.32.0/19", "10.0.64.0/19"]
+}
+
+variable "private_subnet_cidrs" {
+  type    = list(string)
+  default = ["10.0.96.0/19", "10.0.128.0/19", "10.0.160.0/19"]
+}
+
+variable "project_name" {
+  type    = string
+  default = "Demo-EKS"
+}
+variable "common_tags" {
+  type = map(string)
+  default = {
+    "Environmet" = "Dev"
+    "Owner"      = "AvinnaEKSproject"
+  }
+}
+
+variable "desired_size" {
+  type = number
+  default = 2
+}
+
+variable "min_size" {
+  type = number
+  default = 2
+}
+
+variable "max_size" {
+  type = number
+  default = 10
+}
+
+variable "instance_types" {
+  type = list(string)
+  default = [ "t2.micro" ]
+}
+
+variable "eks_node_role_polices" {
+  type = set(string)
+  default = ["arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+  "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"]
+}
+
+vpc.tf
+--------
+
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  instance_tenancy     = "default"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = merge(var.common_tags, {
+    "Name"                                               = "${var.project_name}-vpc",
+    "kubernetes.io/cluster/${var.project_name}-cluster}" = "shared"
+  })
+}
+
+resource "aws_subnet" "public" {
+  count                   = length(var.public_subnet_cidrs)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = element(var.public_subnet_cidrs, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+
+  tags = merge(var.common_tags, {
+    "Name"                                               = "${var.project_name}-public-subnet",
+    "kubernetes.io/cluster/${var.project_name}-cluster}" = "shared",
+    "kubernetes.io/role/elb"                             = "1"
+  })
+}
+
+resource "aws_subnet" "private" {
+  count             = length(var.private_subnet_cidrs)
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = element(var.private_subnet_cidrs, count.index)
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+
+  tags = merge(var.common_tags, {
+    "Name"                                               = "${var.project_name}-private-subnet",
+    "kubernetes.io/cluster/${var.project_name}-cluster}" = "shared",
+    "kubernetes.io/role/internal-elb"                    = "1"
+  })
+}
+
+resource "aws_internet_gateway" "igw" {
+
+  vpc_id = aws_vpc.main.id
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-igw"
+  })
+
+}
+
+resource "aws_route_table" "public_rt" {
+
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-public-rt"
+  })
+
+}
+
+resource "aws_route_table_association" "public_rt_assocation" {
+  count          = length(var.public_subnet_cidrs)
+  route_table_id = aws_route_table.public_rt.id
+  subnet_id      = aws_subnet.public[count.index].id
+}
+
+resource "aws_eip" "nateip" {
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-nateip"
+  })
+
+}
+
+resource "aws_nat_gateway" "nat_gateway" {
+  allocation_id = aws_eip.nateip.id
+  subnet_id     = aws_subnet.public[0].id
+
+  depends_on = [
+    aws_internet_gateway.igw
+  ]
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-nat"
+  })
+}
+
+resource "aws_route_table" "private_rt" {
+
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat_gateway.id
+  }
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-private-rt"
+  })
+
+}
+
+resource "aws_route_table_association" "private_rt_assocation" {
+  count          = length(var.private_subnet_cidrs)
+  route_table_id = aws_route_table.private_rt.id
+  subnet_id      = aws_subnet.private[count.index].id
+}
+
+datasource.tf
+-------------
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_iam_policy_document" "assume_role" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["eks.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+data "aws_iam_policy_document" "assume_role_node" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+eks.cluster.tf
+---------------
+resource "aws_eks_cluster" "main" {
+  name     = "${var.project_name}-cluster"
+  role_arn = aws_iam_role.cluster.arn
+  #version = "1.24"
+
+  vpc_config {
+    subnet_ids              = flatten([aws_subnet.public[*].id, aws_subnet.private[*].id])
+    endpoint_public_access  = true
+    endpoint_private_access = true
+    public_access_cidrs     = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-cluster"
+  })
+
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_policy_attach
+  ]
+
+}
+
+
+resource "aws_iam_role" "cluster" {
+  name               = "${var.project_name}-cluster-role"
+  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_policy_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.cluster.name
+}
+
+eks_nodegroups.tf
+------------------
+resource "aws_eks_node_group" "main" {
+
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = var.project_name
+  subnet_ids      = aws_subnet.private[*].id
+  node_role_arn   = aws_iam_role.node.arn
+
+  scaling_config {
+    desired_size = var.desired_size
+    min_size     = var.min_size
+    max_size     = var.max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+  # Check AWS Doc https://docs.aws.amazon.com/eks/latest/APIReference/API_Nodegroup.html#AmazonEKS-Type-Nodegroup-amiType
+  ami_type       = "AL2_x86_64"
+  disk_size      = 10
+  capacity_type  = "ON_DEMAND"
+  instance_types = var.instance_types
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_eksworkernode
+  ]
+}
+
+resource "aws_iam_role" "node" {
+  name               = "${var.project_name}-worker-role"
+  assume_role_policy = data.aws_iam_policy_document.assume_role_node.json
+  tags = merge(var.common_tags, {
+    "Name" = "${var.project_name}-worker-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "node_eksworkernode" {
+  for_each   = var.eks_node_role_polices
+  role       = aws_iam_role.node.name
+  policy_arn = each.value
+}
+
+qa.tfvars
+--------------
+desired_size = 1
+min_size = 1
+max_size = 2
+instance_types = ["t2.micro"]
+vpc_cidr = "10.1.0.0/16"
+public_subnet_cidrs = ["10.1.0.0/19", "10.1.32.0/19", "10.1.64.0/19"]
+private_subnet_cidrs = ["10.1.96.0/19", "10.1.128.0/19", "10.1.160.0/19"]
+common_tags = {"Environmet" = "QA" , "Owner" = "Avinna_project"}
+project_name = "Demo-EKS-QA"
+
+qa.tfbackend
+---------------
+bucket="terraform-qa-mihtun-state-bucket"
+key="eks/terraform.tfstate"
+
+
+Dev stage cluster create:
+--------------------------------
+dev.tfvars
+----------
+desired_size = 1
+min_size = 1
+max_size = 2
+instance_types = ["t2.micro"]
+project_name = "Demo-EKS-Dev"
+common_tags = {"Environmet" = "Dev" , "Owner" = "Avinna_project"}
+
+dev.tfbackend
+------------
+bucket="terraform-dev-Avinna-state-bucket"
+key="eks/terraform.tfstate"
+
+
+
+
