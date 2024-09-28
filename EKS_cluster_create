@@ -54,7 +54,7 @@ variable "common_tags" {
   type = map(string)
   default = {
     "Environmet" = "Dev"
-    "Owner"      = "AvinnaEKSproject"
+    "Owner"      = "Avinnaproject"
   }
 }
 
@@ -316,12 +316,12 @@ instance_types = ["t2.micro"]
 vpc_cidr = "10.1.0.0/16"
 public_subnet_cidrs = ["10.1.0.0/19", "10.1.32.0/19", "10.1.64.0/19"]
 private_subnet_cidrs = ["10.1.96.0/19", "10.1.128.0/19", "10.1.160.0/19"]
-common_tags = {"Environmet" = "QA" , "Owner" = "Avinna_project"}
+common_tags = {"Environmet" = "QA" , "Owner" = "Avinnaproject"}
 project_name = "Demo-EKS-QA"
 
 qa.tfbackend
 ---------------
-bucket="terraform-qa-mihtun-state-bucket"
+bucket="terraform-qa-Avinna-state-bucket"
 key="eks/terraform.tfstate"
 
 
@@ -334,7 +334,7 @@ min_size = 1
 max_size = 2
 instance_types = ["t2.micro"]
 project_name = "Demo-EKS-Dev"
-common_tags = {"Environmet" = "Dev" , "Owner" = "Avinna_project"}
+common_tags = {"Environmet" = "Dev" , "Owner" = "Avinnaproject"}
 
 dev.tfbackend
 ------------
