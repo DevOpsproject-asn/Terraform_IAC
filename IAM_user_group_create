@@ -1,3 +1,13 @@
+provider "aws" {
+  region                  = "us-east-1"
+  shared_credentials_file = "<Your AWS Credentials File path>"
+}
+terraform {
+  required_version = ">= 0.12"
+}
+variable "AWS_REGION" {
+  default = "us-east-1"
+}
 variable "username" {
   type    = list(string)
   default = ["Dev1", "Dev2", "Dev3", "Dev4", "Dev5"]
@@ -34,6 +44,14 @@ resource "aws_iam_policy" "dev_group_policy" {
       },
     ]
   })
+}
+
+output "user_arn" {
+  value = aws_iam_user.userlist.*.arn
+}
+output "dev-group-id" {
+  value       = aws_iam_group.dev_group.id
+  description = "A reference to the created IAM group"
 }
 
 resource "aws_iam_group_policy_attachment" "custom_policy" {
