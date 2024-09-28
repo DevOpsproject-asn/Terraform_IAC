@@ -1,0 +1,151 @@
+provider.tf
+---------------
+provider "aws" { 
+ region = "var.AWS_REGION" 
+ shared_credentials_file = "<Your AWS Credentials File path>" 
+ }
+
+variable.tf
+-----------
+ variable "AWS_REGION" { 
+ default = "us-east-1" 
+ } 
+ data "aws_vpc" "GetVPC" { 
+ filter { 
+     name = "tag:Name" 
+     values = ["CustomVPC"] 
+     } 
+ } 
+ data "aws_subnet" "GetPublicSubnet" { 
+ filter { 
+     name = "tag:Name" 
+     values = ["PublicSubnet1"] 
+     } 
+ }
+
+version.tf
+-----------
+ terraform { 
+ required_version = ">= 0.12" 
+ }
+
+main.tf
+-----------
+# Below Code will generate a secure private key with encoding
+resource "tls_private_key" "key_pair" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+# Create the Key Pair
+resource "aws_key_pair" "key_pair" {
+  key_name   = "linux-key-pair"  
+  public_key = tls_private_key.key_pair.public_key_openssh
+}
+# Save file
+resource "local_file" "ssh_key" {
+  filename = "${aws_key_pair.key_pair.key_name}.pem"
+  content  = tls_private_key.key_pair.private_key_pem
+}
+
+resource "aws_security_group" "ec2_sg" {
+  name        = "allow_http"
+  description = "Allow http inbound traffic"
+  vpc_id      = data.aws_vpc.GetVPC.id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name = "terraform-ec2-security-group"
+  }
+}
+
+resource "aws_instance" "webservers" {
+    ami = "ami-0742b4e673072066f"
+    instance_type = "t2.micro"
+    security_groups = [aws_security_group.ec2_sg.id]
+    subnet_id = [data.aws_subnet.GetSubnet]
+    key_name = aws_key_pair.key_pair.key_name
+    tags = {
+      Name = "Linux"
+      Env = "Dev"
+    }
+}
+
+resource "aws_instance" "webservers" {
+    ami = "ami-0742b4e673072066f"
+    instance_type = "t2.micro"
+    security_groups = [aws_security_group.ec2_sg.id]
+    subnet_id = [data.aws_subnet.GetSubnet]
+    key_name = aws_key_pair.key_pair.key_name
+    user_data = <<EOF
+    #! /bin/bash
+    sudo su
+    sudo yum update
+    sudo yum install -y httpd
+    sudo chkconfig httpd on
+    sudo service httpd start
+    echo "<h1>Deployed EC2 With Terraform</h1>" | sudo tee /var/www/html/index.html
+    EOF
+
+    tags = {
+      Name = "Linux"
+      Env = "Dev"
+    }
+}
+
+
+variable.tf
+-----------
+variable "AWS_REGION" { 
+    default = "us-east-1" 
+} 
+variable "ami" { 
+type = map 
+default = { 
+    "us-east-1" = "ami-04169656fea786776" 
+    "us-west-1" = "ami-006fce2a9625b177f" 
+    } 
+}
+
+main.tf
+--------
+resource "aws_instance" "webservers" { 
+    ami = lookup(var.ami,var.AWS_REGION) 
+    instance_type = "t2.micro" 
+    security_groups = [aws_security_group.ec2_sg.id] 
+    subnet_id = [data.aws_subnet.GetSubnet] 
+    key_name = aws_key_pair.key_pair.key_name 
+    user_data = <<EOF
+    #! /bin/bash
+    sudo su
+    sudo yum update
+    sudo yum install -y httpd
+    sudo chkconfig httpd on
+    sudo service httpd start
+    echo "<h1>Deployed EC2 With Terraform</h1>" | sudo tee /var/www/html/index.html
+    EOF
+
+    tags = { 
+    Name = "Environment" 
+    Env = "Dev" 
+    } 
+}
+
