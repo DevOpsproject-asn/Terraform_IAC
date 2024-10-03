@@ -1,0 +1,398 @@
+terraform/
+├── main.tf
+├── outputs.tf
+├── variables.tf
+└── modules/
+    ├── s3/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── waf/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── cloudfront/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── lambda/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── apigateway/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── cognito/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    ├── okta/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    └── stepfunctions/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+
+Module 1: S3
+-------------
+modules/s3/main.tf
+hcl
+Copy code
+resource "aws_s3_bucket" "this" {
+  bucket = var.bucket_name
+  acl    = "private"
+
+  versioning {
+    enabled = true
+  }
+
+  tags = var.tags
+}
+modules/s3/variables.tf
+hcl
+Copy code
+variable "bucket_name" {
+  type        = string
+  description = "The name of the S3 bucket"
+}
+
+variable "tags" {
+  type        = map(string)
+  description = "Tags to associate with the S3 bucket"
+  default     = {}
+}
+modules/s3/outputs.tf
+hcl
+Copy code
+output "bucket_name" {
+  value = aws_s3_bucket.this.bucket
+}
+Module 2: WAF
+modules/waf/main.tf
+hcl
+Copy code
+resource "aws_wafv2_web_acl" "this" {
+  name        = var.waf_name
+  description = "Web ACL for CloudFront"
+  scope       = "CLOUDFRONT"
+  default_action {
+    allow {}
+  }
+  rule {
+    name     = "AWS-AWSManagedRulesCommonRuleSet"
+    priority = 1
+    statement {
+      managed_rule_group_statement {
+        vendor_name = "AWS"
+        name        = "AWSManagedRulesCommonRuleSet"
+      }
+    }
+    override_action {
+      none {}
+    }
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "cloudfront_association" {
+  resource_arn = var.cloudfront_arn
+  web_acl_arn  = aws_wafv2_web_acl.this.arn
+}
+modules/waf/variables.tf
+hcl
+Copy code
+variable "waf_name" {
+  type        = string
+  description = "The name of the WAF"
+}
+
+variable "cloudfront_arn" {
+  type        = string
+  description = "The ARN of the CloudFront distribution to associate with the WAF"
+}
+modules/waf/outputs.tf
+hcl
+Copy code
+output "waf_arn" {
+  value = aws_wafv2_web_acl.this.arn
+}
+Module 3: CloudFront
+modules/cloudfront/main.tf
+hcl
+Copy code
+resource "aws_cloudfront_distribution" "this" {
+  origin {
+    domain_name = var.origin_domain_name
+    origin_id   = "S3-${var.origin_domain_name}"
+
+    s3_origin_config {
+      origin_access_identity = aws_cloudfront_origin_access_identity.this.cloudfront_access_identity_path
+    }
+  }
+
+  enabled             = true
+  default_cache_behavior {
+    target_origin_id       = "S3-${var.origin_domain_name}"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+resource "aws_cloudfront_origin_access_identity" "this" {
+  comment = "Access to S3"
+}
+modules/cloudfront/variables.tf
+hcl
+Copy code
+variable "origin_domain_name" {
+  type        = string
+  description = "The domain name of the origin (e.g., S3 bucket or API Gateway)"
+}
+modules/cloudfront/outputs.tf
+hcl
+Copy code
+output "cloudfront_domain_name" {
+  value = aws_cloudfront_distribution.this.domain_name
+}
+
+Module 4.Lambda 
+
+modules/lambda/main.tf
+------------------
+resource "aws_lambda_function" "this" {
+  function_name = var.function_name
+  handler       = var.handler
+  runtime       = var.runtime
+  role          = var.role_arn
+
+  # Lambda code source can either be from S3 or direct file upload
+  dynamic "source" {
+    for_each = var.source_type == "s3" ? [1] : []
+
+    content {
+      s3_bucket        = var.s3_bucket
+      s3_key           = var.s3_key
+      s3_object_version = var.s3_object_version
+    }
+  }
+
+  dynamic "local" {
+    for_each = var.source_type == "local" ? [1] : []
+
+    content {
+      filename         = var.filename
+    }
+  }
+
+  # Optional environment variables
+  environment {
+    variables = var.environment_variables
+  }
+
+  memory_size      = var.memory_size
+  timeout          = var.timeout
+}
+
+# Optional CloudWatch log group for Lambda
+resource "aws_cloudwatch_log_group" "lambda_log_group" {
+  count       = var.create_log_group ? 1 : 0
+  name        = "/aws/lambda/${aws_lambda_function.this.function_name}"
+  retention_in_days = var.log_retention
+}
+
+# Optional Lambda Permission (for API Gateway or other services to invoke)
+resource "aws_lambda_permission" "allow_invoke" {
+  count        = var.allow_invoke ? 1 : 0
+  statement_id = "AllowExecutionFromAPI"
+  action       = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.this.arn
+  principal    = var.invoke_principal
+  source_arn   = var.source_arn
+}
+
+modules/lambda/variables.tf
+-----------------------------
+variable "function_name" {
+  description = "The name of the Lambda function"
+  type        = string
+}
+
+variable "handler" {
+  description = "The function entrypoint in your code"
+  type        = string
+}
+
+variable "runtime" {
+  description = "The runtime environment for the Lambda function"
+  type        = string
+}
+
+variable "role_arn" {
+  description = "The ARN of the IAM role that Lambda assumes when it runs"
+  type        = string
+}
+
+variable "source_type" {
+  description = "Source type for the lambda function code: s3 or local"
+  type        = string
+  default     = "local"
+}
+
+variable "s3_bucket" {
+  description = "The S3 bucket containing the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+variable "s3_key" {
+  description = "The S3 key of the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+variable "s3_object_version" {
+  description = "The version of the deployment package object in S3"
+  type        = string
+  default     = ""
+}
+
+variable "filename" {
+  description = "The local filename of the Lambda deployment package"
+  type        = string
+  default     = ""
+}
+
+variable "memory_size" {
+  description = "The amount of memory in MB your Lambda function can use"
+  type        = number
+  default     = 128
+}
+
+variable "timeout" {
+  description = "The amount of time your Lambda function has to run in seconds"
+  type        = number
+  default     = 3
+}
+
+variable "environment_variables" {
+  description = "Environment variables for the Lambda function"
+  type        = map(string)
+  default     = {}
+}
+
+variable "create_log_group" {
+  description = "Whether to create a CloudWatch log group for Lambda"
+  type        = bool
+  default     = true
+}
+
+variable "log_retention" {
+  description = "Retention period for the CloudWatch log group"
+  type        = number
+  default     = 7
+}
+
+variable "allow_invoke" {
+  description = "Whether to allow invocation of the Lambda function from a source"
+  type        = bool
+  default     = false
+}
+
+variable "invoke_principal" {
+  description = "The principal (e.g., API Gateway) that will invoke the Lambda function"
+  type        = string
+  default     = ""
+}
+
+variable "source_arn" {
+  description = "The ARN of the source (e.g., API Gateway) that can invoke the Lambda function"
+  type        = string
+  default     = ""
+}
+
+modules/lambda/outputs.tf
+---------------------------
+output "lambda_function_arn" {
+  description = "The ARN of the Lambda function"
+  value       = aws_lambda_function.this.arn
+}
+
+output "lambda_function_name" {
+  description = "The name of the Lambda function"
+  value       = aws_lambda_function.this.function_name
+}
+
+output "lambda_invoke_arn" {
+  description = "The ARN to be used for invoking Lambda"
+  value       = aws_lambda_function.this.invoke_arn
+}
+
+
+Module 5: API Gateway
+----------------------
+modules/apigateway/main.tf
+------------------------
+resource "aws_api_gateway_rest_api" "this" {
+  name        = var.api_name
+  description = var.api_description
+}
+
+resource "aws_api_gateway_resource" "resource" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_rest_api.this.root_resource_id
+  path_part   = var.resource_path
+}
+
+resource "aws_api_gateway_method" "method" {
+  rest_api_id   = aws_api_gateway_rest_api.this.id
+  resource_id   = aws_api_gateway_resource.resource.id
+  http_method   = var.http_method
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "integration" {
+  rest_api_id             = aws_api_gateway_rest_api.this.id
+  resource_id             = aws_api_gateway_resource.resource.id
+  http_method             = aws_api_gateway_method.method.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = var.lambda_invoke_arn
+}
+
+resource "aws_api_gateway_deployment" "deployment" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  stage_name  = "prod"
+  depends_on  = [aws_api_gateway_integration.integration]
+}
+
+modules/apigateway/variables.tf
+--------------------------------
+variable "api_name" {
+  type        = string
+  description = "The name of the API"
+}
+
+variable "api_description" {
+  type        = string
+  description = "A description of the API"
+}
